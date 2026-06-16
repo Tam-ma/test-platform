@@ -10,6 +10,44 @@ export const users = sqliteTable('users', {
   passwordHash: text('password_hash').notNull(),
   fullName: text('full_name'),
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(false),
+  systemRole: text('system_role'), // platform-level role: null = regular user, 'super_admin' = platform admin
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+})
+
+/**
+ * Organizations table - tenant accounts that own resources (api keys, model configs, usage).
+ * Every user gets a personal organization on registration (isPersonal = true).
+ */
+export const organizations = sqliteTable('organizations', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  domain: text('domain'), // optional, for SSO / email-domain matching
+  email: text('email'),
+  website: text('website'),
+  status: text('status').notNull().default('active'), // active | inactive | suspended | deleted
+  subscriptionTier: text('subscription_tier').notNull().default('free'),
+  isPersonal: integer('is_personal', { mode: 'boolean' }).notNull().default(false),
+  createdBy: text('created_by').references(() => users.id),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+})
+
+/**
+ * User ↔ Organization membership. Carries the per-org role and invitation status.
+ * Uniqueness of (userId, organizationId) is enforced in MembershipService.
+ */
+export const userOrganizations = sqliteTable('user_organizations', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  role: text('role').notNull().default('member'), // owner | admin | member | viewer
+  status: text('status').notNull().default('active'), // active | pending | invited | left
+  invitationToken: text('invitation_token').unique(),
+  invitedBy: text('invited_by').references(() => users.id),
+  jobTitle: text('job_title'),
+  department: text('department'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 })
@@ -42,6 +80,7 @@ export const passwordResetTokens = sqliteTable('password_reset_tokens', {
 export const apiKeys = sqliteTable('api_keys', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  organizationId: text('organization_id').references(() => organizations.id, { onDelete: 'cascade' }), // tenant that owns the key
   name: text('name').notNull(),
   description: text('description'),
   keyHash: text('key_hash').notNull().unique(),
@@ -72,6 +111,12 @@ export const apiKeyUsage = sqliteTable('api_key_usage', {
 // Type exports for TypeScript
 export type User = typeof users.$inferSelect
 export type InsertUser = typeof users.$inferInsert
+
+export type Organization = typeof organizations.$inferSelect
+export type InsertOrganization = typeof organizations.$inferInsert
+
+export type UserOrganization = typeof userOrganizations.$inferSelect
+export type InsertUserOrganization = typeof userOrganizations.$inferInsert
 
 export type VerificationToken = typeof verificationTokens.$inferSelect
 export type InsertVerificationToken = typeof verificationTokens.$inferInsert
@@ -298,6 +343,7 @@ export const llmModels = sqliteTable('llm_models', {
 export const userModelConfigs = sqliteTable('user_model_configs', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  organizationId: text('organization_id').references(() => organizations.id, { onDelete: 'cascade' }), // tenant that owns the config
   modelId: text('model_id').notNull().references(() => llmModels.id, { onDelete: 'cascade' }),
 
   // API credentials (encrypted)
@@ -330,6 +376,7 @@ export const userModelConfigs = sqliteTable('user_model_configs', {
 export const modelUsage = sqliteTable('model_usage', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  organizationId: text('organization_id').references(() => organizations.id, { onDelete: 'cascade' }), // tenant the usage is billed to
   userModelConfigId: text('user_model_config_id').references(() => userModelConfigs.id, { onDelete: 'set null' }),
   modelId: text('model_id').notNull().references(() => llmModels.id),
 

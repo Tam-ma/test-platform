@@ -26,6 +26,7 @@ export interface APIKeyServiceContext {
 
 export interface GenerateKeyOptions {
   userId: string
+  organizationId?: string
   name: string
   description?: string
   scopes: string[]
@@ -35,7 +36,7 @@ export interface GenerateKeyOptions {
 }
 
 export interface ListKeysOptions {
-  userId: string
+  organizationId: string
   status?: 'active' | 'inactive' | 'expired' | 'revoked'
   search?: string
   limit?: number
@@ -76,7 +77,7 @@ export class APIKeyService {
    * Generate a new API key
    */
   async generateKey(options: GenerateKeyOptions): Promise<{ key: APIKey; plainKey: string }> {
-    const { userId, name, description, scopes, rateLimit = 1000, expiresAt, ipWhitelist } = options
+    const { userId, organizationId, name, description, scopes, rateLimit = 1000, expiresAt, ipWhitelist } = options
 
     // Validate inputs
     const nameValidation = validateAPIKeyName(name)
@@ -120,6 +121,7 @@ export class APIKeyService {
     const newKey: InsertAPIKey = {
       id: keyId,
       userId,
+      organizationId: organizationId || null,
       name,
       description: description || null,
       keyHash,
@@ -153,10 +155,10 @@ export class APIKeyService {
    * List API keys for a user
    */
   async listKeys(options: ListKeysOptions): Promise<{ keys: APIKeyWithStats[]; total: number }> {
-    const { userId, status, search, limit = 20, offset = 0 } = options
+    const { organizationId, status, search, limit = 20, offset = 0 } = options
 
-    // Build query conditions
-    const conditions = [eq(apiKeys.userId, userId)]
+    // Build query conditions — scope to the active organization (tenant)
+    const conditions = [eq(apiKeys.organizationId, organizationId)]
 
     if (status) {
       conditions.push(eq(apiKeys.status, status))
@@ -214,11 +216,11 @@ export class APIKeyService {
   /**
    * Get a specific API key
    */
-  async getKey(keyId: string, userId: string): Promise<APIKeyWithStats | null> {
+  async getKey(keyId: string, organizationId: string): Promise<APIKeyWithStats | null> {
     const key = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.organizationId, organizationId)))
       .get()
 
     if (!key) {
@@ -242,7 +244,7 @@ export class APIKeyService {
   /**
    * Update an API key
    */
-  async updateKey(keyId: string, userId: string, updates: UpdateKeyOptions): Promise<APIKey> {
+  async updateKey(keyId: string, organizationId: string, updates: UpdateKeyOptions): Promise<APIKey> {
     // Validate updates
     if (updates.name) {
       const nameValidation = validateAPIKeyName(updates.name)
@@ -278,7 +280,7 @@ export class APIKeyService {
     const existingKey = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.organizationId, organizationId)))
       .get()
 
     if (!existingKey) {
@@ -322,12 +324,12 @@ export class APIKeyService {
   /**
    * Revoke an API key
    */
-  async revokeKey(keyId: string, userId: string): Promise<void> {
+  async revokeKey(keyId: string, organizationId: string): Promise<void> {
     // Check if key exists and belongs to user
     const existingKey = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.organizationId, organizationId)))
       .get()
 
     if (!existingKey) {
@@ -420,7 +422,7 @@ export class APIKeyService {
    */
   async getKeyUsage(
     keyId: string,
-    userId: string,
+    organizationId: string,
     options?: {
       startDate?: Date
       endDate?: Date
@@ -432,7 +434,7 @@ export class APIKeyService {
     const key = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.organizationId, organizationId)))
       .get()
 
     if (!key) {

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { drizzle } from 'drizzle-orm/d1'
 import * as schema from './db/schema'
+import type { Role } from './auth/permissions'
 
 /**
  * Cloudflare Workers environment bindings
@@ -22,6 +23,9 @@ export interface HonoContext {
   Variables: {
     db: ReturnType<typeof drizzle<typeof schema>>
     userId?: string
+    activeOrgId?: string
+    orgRole?: Role | null
+    systemRole?: Role | null
   }
 }
 
@@ -71,9 +75,11 @@ app.get('/', (c) => {
 import { authRoutes } from './routes/auth.routes'
 import { apiKeyRoutes } from './routes/api-key.routes'
 import modelsRoutes from './routes/models.routes'
+import { orgRoutes } from './routes/organizations.routes'
 
 app.route('/auth', authRoutes)
 app.route('/api-keys', apiKeyRoutes)
 app.route('/models', modelsRoutes)
+app.route('/organizations', orgRoutes)
 
 export default app

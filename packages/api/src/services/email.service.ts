@@ -9,13 +9,14 @@ interface EmailOptions {
 }
 
 export class EmailService {
-  private resend: Resend
+  private resend: Resend | null
   private fromEmail: string
 
-  constructor() {
-    // Initialize Resend with API key
-    const apiKey = process.env.RESEND_API_KEY || 're_cmjpryvG_8A6PKNjHm9VSiENDahAC7G1m'
-    this.resend = new Resend(apiKey)
+  constructor(apiKey?: string) {
+    // Resolve the Resend API key from the caller (Worker binding) or environment.
+    // No hardcoded fallback — a missing key disables sending rather than leaking one.
+    const key = apiKey || process.env.RESEND_API_KEY
+    this.resend = key ? new Resend(key) : null
 
     // Set from email
     this.fromEmail = process.env.EMAIL_FROM || 'Mithqal <mithqal@tamma.dev>'
@@ -30,6 +31,13 @@ export class EmailService {
   }
 
   async sendEmail(options: EmailOptions): Promise<void> {
+    if (!this.resend) {
+      console.warn('Email not sent: RESEND_API_KEY is not configured', {
+        to: options.to,
+        subject: options.subject,
+      })
+      return
+    }
     try {
       const { data, error } = await this.resend.emails.send({
         from: this.fromEmail,

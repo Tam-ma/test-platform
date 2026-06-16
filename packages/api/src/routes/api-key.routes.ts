@@ -1,16 +1,24 @@
 /**
  * API Key management routes
- * Handles API key generation, validation, and management
+ *
+ * Keys belong to the caller's active organization (tenant); `userId` is recorded
+ * as the creator. Every route runs requireAuth → loadOrgContext and is guarded by
+ * the relevant API permission.
  */
 
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { APIKeyService } from '../services/api-key.service'
-import { extractTokenFromHeader, verifyToken } from '../utils/jwt'
+import { requireAuth } from '../middleware/auth.middleware'
+import { loadOrgContext, requirePermission } from '../middleware/org-context'
+import { Permission } from '../auth/permissions'
 import type { HonoContext } from '../index'
 
 const apiKeyRoutes = new Hono<HonoContext>()
+
+// Every API-key route is authenticated and scoped to an active organization.
+apiKeyRoutes.use('*', requireAuth, loadOrgContext)
 
 // Validation schemas
 const generateKeySchema = z.object({
@@ -46,46 +54,21 @@ const usageQuerySchema = z.object({
 })
 
 /**
- * Authentication middleware - verifies JWT token
- */
-async function requireAuth(c: HonoContext, next: Function) {
-  const authHeader = c.req.header('Authorization')
-  const token = extractTokenFromHeader(authHeader)
-
-  if (!token) {
-    return c.json({ error: 'Authentication required' }, 401)
-  }
-
-  const decoded = await verifyToken(token, c.env.JWT_SECRET)
-
-  if (!decoded || decoded.type !== 'access') {
-    return c.json({ error: 'Invalid access token' }, 401)
-  }
-
-  // Store user info in context
-  c.set('user', decoded)
-  await next()
-}
-
-/**
- * POST /api-keys
- * Generate a new API key
+ * POST /api-keys — generate a new API key for the active organization
  */
 apiKeyRoutes.post(
   '/',
-  requireAuth,
+  requirePermission(Permission.API_CREATE_KEYS),
   zValidator('json', generateKeySchema),
   async (c) => {
     try {
-      const user = c.get('user')
       const { name, description, scopes, rateLimit, expiresAt, ipWhitelist } = c.req.valid('json')
 
-      const apiKeyService = new APIKeyService({
-        db: c.get('db'),
-      })
+      const apiKeyService = new APIKeyService({ db: c.get('db') })
 
       const { key, plainKey } = await apiKeyService.generateKey({
-        userId: user.userId,
+        userId: c.get('userId')!,
+        organizationId: c.get('activeOrgId')!,
         name,
         description,
         scopes,
@@ -94,14 +77,12 @@ apiKeyRoutes.post(
         ipWhitelist,
       })
 
-      // Remove sensitive data from response
       const { keyHash, ...keyResponse } = key
 
       return c.json(
         {
           message: 'API key generated successfully',
           key: keyResponse,
-          // Include the plain key only once - user must save it
           apiKey: plainKey,
           warning: 'Please save this API key. You will not be able to see it again.',
         },
@@ -115,31 +96,26 @@ apiKeyRoutes.post(
 )
 
 /**
- * GET /api-keys
- * List all API keys for the authenticated user
+ * GET /api-keys — list the active organization's API keys
  */
 apiKeyRoutes.get(
   '/',
-  requireAuth,
+  requirePermission(Permission.API_READ_KEYS),
   zValidator('query', listKeysSchema),
   async (c) => {
     try {
-      const user = c.get('user')
       const { status, search, limit = 20, offset = 0 } = c.req.valid('query')
 
-      const apiKeyService = new APIKeyService({
-        db: c.get('db'),
-      })
+      const apiKeyService = new APIKeyService({ db: c.get('db') })
 
       const { keys, total } = await apiKeyService.listKeys({
-        userId: user.userId,
+        organizationId: c.get('activeOrgId')!,
         status,
         search,
         limit,
         offset,
       })
 
-      // Remove sensitive data from response
       const sanitizedKeys = keys.map(({ keyHash, ...key }) => key)
 
       return c.json({
@@ -157,67 +133,43 @@ apiKeyRoutes.get(
 )
 
 /**
- * GET /api-keys/:id
- * Get details of a specific API key
+ * GET /api-keys/:id — get a specific API key in the active organization
  */
-apiKeyRoutes.get(
-  '/:id',
-  requireAuth,
-  async (c) => {
-    try {
-      const user = c.get('user')
-      const keyId = c.req.param('id')
+apiKeyRoutes.get('/:id', requirePermission(Permission.API_READ_KEYS), async (c) => {
+  try {
+    const keyId = c.req.param('id')
+    const apiKeyService = new APIKeyService({ db: c.get('db') })
 
-      const apiKeyService = new APIKeyService({
-        db: c.get('db'),
-      })
-
-      const key = await apiKeyService.getKey(keyId, user.userId)
-
-      if (!key) {
-        return c.json({ error: 'API key not found' }, 404)
-      }
-
-      // Remove sensitive data from response
-      const { keyHash, ...keyResponse } = key
-
-      return c.json({
-        key: keyResponse,
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to get API key'
-      return c.json({ error: message }, 500)
+    const key = await apiKeyService.getKey(keyId, c.get('activeOrgId')!)
+    if (!key) {
+      return c.json({ error: 'API key not found' }, 404)
     }
+
+    const { keyHash, ...keyResponse } = key
+    return c.json({ key: keyResponse })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to get API key'
+    return c.json({ error: message }, 500)
   }
-)
+})
 
 /**
- * PUT /api-keys/:id
- * Update an API key
+ * PUT /api-keys/:id — update an API key
  */
 apiKeyRoutes.put(
   '/:id',
-  requireAuth,
+  requirePermission(Permission.API_UPDATE_KEYS),
   zValidator('json', updateKeySchema),
   async (c) => {
     try {
-      const user = c.get('user')
       const keyId = c.req.param('id')
       const updates = c.req.valid('json')
 
-      const apiKeyService = new APIKeyService({
-        db: c.get('db'),
-      })
+      const apiKeyService = new APIKeyService({ db: c.get('db') })
+      const updatedKey = await apiKeyService.updateKey(keyId, c.get('activeOrgId')!, updates)
 
-      const updatedKey = await apiKeyService.updateKey(keyId, user.userId, updates)
-
-      // Remove sensitive data from response
       const { keyHash, ...keyResponse } = updatedKey
-
-      return c.json({
-        message: 'API key updated successfully',
-        key: keyResponse,
-      })
+      return c.json({ message: 'API key updated successfully', key: keyResponse })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update API key'
       return c.json({ error: message }, 400)
@@ -226,71 +178,51 @@ apiKeyRoutes.put(
 )
 
 /**
- * DELETE /api-keys/:id
- * Revoke an API key
+ * DELETE /api-keys/:id — revoke an API key
  */
-apiKeyRoutes.delete(
-  '/:id',
-  requireAuth,
-  async (c) => {
-    try {
-      const user = c.get('user')
-      const keyId = c.req.param('id')
-
-      const apiKeyService = new APIKeyService({
-        db: c.get('db'),
-      })
-
-      await apiKeyService.revokeKey(keyId, user.userId)
-
-      return c.json({
-        message: 'API key revoked successfully',
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to revoke API key'
-      return c.json({ error: message }, 400)
-    }
+apiKeyRoutes.delete('/:id', requirePermission(Permission.API_DELETE_KEYS), async (c) => {
+  try {
+    const keyId = c.req.param('id')
+    const apiKeyService = new APIKeyService({ db: c.get('db') })
+    await apiKeyService.revokeKey(keyId, c.get('activeOrgId')!)
+    return c.json({ message: 'API key revoked successfully' })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to revoke API key'
+    return c.json({ error: message }, 400)
   }
-)
+})
 
 /**
- * GET /api-keys/:id/usage
- * Get usage statistics for an API key
+ * GET /api-keys/:id/usage — usage statistics for an API key
  */
 apiKeyRoutes.get(
   '/:id/usage',
-  requireAuth,
+  requirePermission(Permission.API_VIEW_USAGE),
   zValidator('query', usageQuerySchema),
   async (c) => {
     try {
-      const user = c.get('user')
       const keyId = c.req.param('id')
       const { startDate, endDate, limit = 100, offset = 0 } = c.req.valid('query')
 
-      const apiKeyService = new APIKeyService({
-        db: c.get('db'),
+      const apiKeyService = new APIKeyService({ db: c.get('db') })
+
+      const { usage, total } = await apiKeyService.getKeyUsage(keyId, c.get('activeOrgId')!, {
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        limit,
+        offset,
       })
 
-      const { usage, total } = await apiKeyService.getKeyUsage(
-        keyId,
-        user.userId,
-        {
-          startDate: startDate ? new Date(startDate) : undefined,
-          endDate: endDate ? new Date(endDate) : undefined,
-          limit,
-          offset,
-        }
-      )
-
-      // Calculate statistics
       const stats = {
         totalRequests: total,
-        successRate: usage.length > 0
-          ? (usage.filter(u => u.statusCode >= 200 && u.statusCode < 300).length / usage.length) * 100
-          : 0,
-        averageResponseTime: usage.length > 0
-          ? usage.reduce((acc, u) => acc + (u.responseTime || 0), 0) / usage.length
-          : 0,
+        successRate:
+          usage.length > 0
+            ? (usage.filter((u) => u.statusCode >= 200 && u.statusCode < 300).length / usage.length) * 100
+            : 0,
+        averageResponseTime:
+          usage.length > 0
+            ? usage.reduce((acc, u) => acc + (u.responseTime || 0), 0) / usage.length
+            : 0,
         endpointBreakdown: usage.reduce((acc, u) => {
           const key = `${u.method} ${u.endpoint}`
           acc[key] = (acc[key] || 0) + 1

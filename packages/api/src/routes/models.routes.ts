@@ -9,9 +9,18 @@ import { z } from 'zod'
 import { drizzle } from 'drizzle-orm/d1'
 import { ModelConfigService, formatCost, calculateCost } from '../services/model-config.service'
 import * as schema from '../db/schema'
+import { requireAuth } from '../middleware/auth.middleware'
+import { loadOrgContext } from '../middleware/org-context'
 import type { Context } from '../types'
 
 const models = new Hono<Context>()
+
+// User-scoped endpoints require authentication + active-org context.
+// (loadOrgContext sets `userId`, which these handlers read — previously it was
+// never set, so every config/usage call 401'd.) Public catalog routes stay open.
+models.use('/configs', requireAuth, loadOrgContext)
+models.use('/configs/*', requireAuth, loadOrgContext)
+models.use('/usage/*', requireAuth, loadOrgContext)
 
 /**
  * GET /models
