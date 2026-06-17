@@ -128,8 +128,10 @@ export async function requireAPIKey(c: HonoContext, next: Next) {
     // Track API usage
     const startTime = Date.now()
 
-    // Attach API key to context
+    // Attach API key + its organization to context, so API-key-authenticated
+    // routes are tenant-scoped the same way JWT routes are.
     c.set('apiKey', result.key)
+    c.set('activeOrgId', result.key.organizationId ?? undefined)
 
     // Continue to the route handler
     await next()

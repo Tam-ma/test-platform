@@ -76,10 +76,12 @@ import { authRoutes } from './routes/auth.routes'
 import { apiKeyRoutes } from './routes/api-key.routes'
 import modelsRoutes from './routes/models.routes'
 import { orgRoutes } from './routes/organizations.routes'
+import { v1Routes } from './routes/v1.routes'
 
 app.route('/auth', authRoutes)
 app.route('/api-keys', apiKeyRoutes)
 app.route('/models', modelsRoutes)
 app.route('/organizations', orgRoutes)
+app.route('/v1', v1Routes)
 
 export default app
