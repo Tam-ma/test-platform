@@ -138,6 +138,7 @@ authRoutes.post(
       const authService = new AuthService({
         db: c.get('db'),
         jwtSecret: c.env.JWT_SECRET,
+        resendApiKey: c.env.RESEND_API_KEY,
       })
 
       await authService.resendVerificationEmail(email)

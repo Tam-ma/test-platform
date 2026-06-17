@@ -38,10 +38,10 @@ export async function loadOrgContext(c: Ctx, next: Next) {
   }
 
   if (!activeOrgId) {
-    // No org context (should not happen once every user has a personal org).
-    c.set('activeOrgId', undefined)
-    c.set('orgRole', null)
-    return next()
+    // Fail closed: an authenticated request with no active org must not reach
+    // org-scoped handlers — they would otherwise run with an undefined org id
+    // (silent empty reads, orphaned NULL-org writes).
+    return c.json({ error: 'No active organization for this account' }, 403)
   }
 
   const memberships = new MembershipService({ db })

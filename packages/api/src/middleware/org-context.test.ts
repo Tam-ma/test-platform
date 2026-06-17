@@ -62,6 +62,12 @@ describe('loadOrgContext', () => {
     )
     expect(res.status).toBe(403)
   })
+
+  it('403s (fail-closed) when the user has no organization at all', async () => {
+    const uid = await makeUser('orphan@example.com') // user exists, but no org
+    const res = await buildApp({ userId: uid, email: 'orphan@example.com' }).request('/whoami')
+    expect(res.status).toBe(403)
+  })
 })
 
 describe('role + permission guards', () => {

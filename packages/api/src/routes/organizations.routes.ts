@@ -72,7 +72,23 @@ orgRoutes.post('/switch', zValidator('json', switchOrgSchema), async (c) => {
       c.env.JWT_SECRET,
       '15m',
     )
-    return c.json({ accessToken, activeOrgId: organizationId })
+    // Re-mint the refresh token too — otherwise the next refresh reverts to the
+    // login-time org, since the old refresh token still carried it.
+    const refreshToken = await signToken(
+      { userId: user.userId, email: user.email, type: 'refresh', activeOrgId: organizationId },
+      c.env.JWT_SECRET,
+      '7d',
+    )
+    if (c.env.KV) {
+      await c.env.KV.put(`refresh_token:${user.userId}`, refreshToken, {
+        expirationTtl: 7 * 24 * 60 * 60,
+      })
+    }
+    c.header(
+      'Set-Cookie',
+      `refreshToken=${refreshToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${7 * 24 * 60 * 60}`,
+    )
+    return c.json({ accessToken, refreshToken, activeOrgId: organizationId })
   } catch (e) {
     return c.json({ error: msg(e) }, 400)
   }

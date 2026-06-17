@@ -94,8 +94,13 @@ describe('login + organization routes', () => {
     // switch to it → new token targets the new org
     const switchRes = await app().request('/organizations/switch', json({ organizationId: teamId }, auth), ENV)
     expect(switchRes.status).toBe(200)
-    const switched = (await switchRes.json()) as { accessToken: string; activeOrgId: string }
+    const switched = (await switchRes.json()) as {
+      accessToken: string
+      refreshToken: string
+      activeOrgId: string
+    }
     expect(switched.activeOrgId).toBe(teamId)
+    expect(switched.refreshToken).toBeTruthy() // switch re-mints the refresh token too (survives refresh)
 
     // current org (with the switched token) reflects the new org + owner role
     const currentRes = await app().request(

@@ -30,6 +30,7 @@ export interface AuthServiceContext {
   jwtSecret: string
   kv?: KVNamespace
   emailService?: EmailService
+  resendApiKey?: string
 }
 
 export interface LoginResponse {
@@ -45,11 +46,11 @@ export class AuthService {
   private kv?: KVNamespace
   private emailService?: EmailService
 
-  constructor({ db, jwtSecret, kv, emailService }: AuthServiceContext) {
+  constructor({ db, jwtSecret, kv, emailService, resendApiKey }: AuthServiceContext) {
     this.db = db
     this.jwtSecret = jwtSecret
     this.kv = kv
-    this.emailService = emailService || new EmailService()
+    this.emailService = emailService || new EmailService(resendApiKey)
   }
 
   /**
@@ -100,10 +101,17 @@ export class AuthService {
 
     await this.db.insert(users).values(newUser)
 
-    // Create the user's personal organization (tenant) with them as owner,
-    // so every account always has an active org to scope requests to.
+    // Create the user's personal organization (tenant) with them as owner, so
+    // every account always has an active org to scope requests to. D1 has no
+    // multi-statement transaction here, so compensate by removing the user if the
+    // org/membership creation fails — never leave an account with no org.
     const orgService = new OrganizationService({ db: this.db })
-    await orgService.createPersonalOrganization(userId, fullName || email.split('@')[0])
+    try {
+      await orgService.createPersonalOrganization(userId, fullName || email.split('@')[0])
+    } catch (err) {
+      await this.db.delete(users).where(eq(users.id, userId))
+      throw err
+    }
 
     // Create verification token
     const verificationToken = generateToken(32)

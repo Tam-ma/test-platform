@@ -69,4 +69,26 @@ describe('ModelConfigService is org-scoped', () => {
     await h.db.insert(organizations).values({ id: otherOrg, name: 'O2', slug: `o2-${otherOrg}` })
     expect((await svc.getUserUsageStats(otherOrg)).totalRequests).toBe(0)
   })
+
+  it('stays org-isolated when a modelId filter is passed (regression: .where overwrite leak)', async () => {
+    const { userId, orgId, modelId } = await seed()
+    const otherOrg = nanoid()
+    await h.db.insert(organizations).values({ id: otherOrg, name: 'B', slug: `b-${otherOrg}` })
+
+    // Another org records usage of the same model.
+    await svc.recordModelUsage({
+      userId,
+      organizationId: otherOrg,
+      modelId,
+      requestType: 'benchmark',
+      inputTokens: 1000,
+      outputTokens: 0,
+      success: true,
+    })
+
+    // Our org filtering by that model must NOT see the other org's usage.
+    const stats = await svc.getUserUsageStats(orgId, { modelId })
+    expect(stats.totalRequests).toBe(0)
+    expect(stats.totalTokens).toBe(0)
+  })
 })

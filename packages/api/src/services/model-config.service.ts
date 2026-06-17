@@ -30,17 +30,14 @@ export class ModelConfigService {
     supportsVision?: boolean
     supportsFunctions?: boolean
   }): Promise<SelectLLMModel[]> {
-    let query = this.db.select().from(llmModels)
+    // Drizzle's .where() overwrites rather than ANDs — combine conditions once.
+    const conditions = []
+    if (filters?.provider) conditions.push(eq(llmModels.provider, filters.provider))
+    if (filters?.status) conditions.push(eq(llmModels.status, filters.status))
 
-    // Apply filters if provided
-    if (filters?.provider) {
-      query = query.where(eq(llmModels.provider, filters.provider)) as any
-    }
-    if (filters?.status) {
-      query = query.where(eq(llmModels.status, filters.status)) as any
-    }
-
-    const models = await query
+    const models = conditions.length
+      ? await this.db.select().from(llmModels).where(and(...conditions))
+      : await this.db.select().from(llmModels)
 
     // Apply boolean filters manually (SQLite limitation)
     let filtered = models
@@ -269,20 +266,14 @@ export class ModelConfigService {
       costUsd: number
     }>
   }> {
-    let query = this.db.select().from(modelUsage).where(eq(modelUsage.organizationId, organizationId))
+    // Combine in a single .where(): Drizzle's .where() OVERWRITES, so chaining a
+    // filter after the org scope would silently drop tenant isolation (leak).
+    const conditions = [eq(modelUsage.organizationId, organizationId)]
+    if (options?.modelId) conditions.push(eq(modelUsage.modelId, options.modelId))
+    if (options?.startDate) conditions.push(sql`${modelUsage.timestamp} >= ${options.startDate}`)
+    if (options?.endDate) conditions.push(sql`${modelUsage.timestamp} <= ${options.endDate}`)
 
-    if (options?.modelId) {
-      query = query.where(eq(modelUsage.modelId, options.modelId)) as any
-    }
-
-    if (options?.startDate) {
-      query = query.where(sql`${modelUsage.timestamp} >= ${options.startDate}`) as any
-    }
-
-    if (options?.endDate) {
-      query = query.where(sql`${modelUsage.timestamp} <= ${options.endDate}`) as any
-    }
-
+    let query = this.db.select().from(modelUsage).where(and(...conditions)) as any
     if (options?.limit) {
       query = query.limit(options.limit) as any
     }
