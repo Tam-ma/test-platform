@@ -107,7 +107,7 @@ models.get('/configs/me', async (c) => {
 
   const db = drizzle(c.env.DB, { schema })
   const service = new ModelConfigService(db)
-  const configs = await service.getUserModelConfigs(userId)
+  const configs = await service.getUserModelConfigs(c.get('activeOrgId')!)
 
   return c.json({
     success: true,
@@ -175,7 +175,7 @@ models.post(
     const service = new ModelConfigService(db)
 
     try {
-      const config = await service.createUserModelConfig(userId, data)
+      const config = await service.createUserModelConfig(userId, c.get('activeOrgId')!, data)
 
       return c.json(
         {
@@ -240,7 +240,7 @@ models.patch(
     const service = new ModelConfigService(db)
 
     try {
-      const config = await service.updateUserModelConfig(userId, configId, updates)
+      const config = await service.updateUserModelConfig(c.get('activeOrgId')!, configId, updates)
 
       if (!config) {
         return c.json(
@@ -299,7 +299,7 @@ models.delete('/configs/:id', async (c) => {
   const service = new ModelConfigService(db)
 
   try {
-    await service.deleteUserModelConfig(userId, configId)
+    await service.deleteUserModelConfig(c.get('activeOrgId')!, configId)
 
     return c.json({
       success: true,
@@ -346,7 +346,7 @@ models.get(
     const options = c.req.valid('query')
     const db = drizzle(c.env.DB, { schema })
     const service = new ModelConfigService(db)
-    const stats = await service.getUserUsageStats(userId, options)
+    const stats = await service.getUserUsageStats(c.get('activeOrgId')!, options)
 
     return c.json({
       success: true,
@@ -384,7 +384,7 @@ models.get('/configs/:id/budget', async (c) => {
   const service = new ModelConfigService(db)
 
   try {
-    const budgetCheck = await service.checkUserBudgetLimits(userId, configId)
+    const budgetCheck = await service.checkUserBudgetLimits(c.get('activeOrgId')!, configId)
 
     return c.json({
       success: true,
