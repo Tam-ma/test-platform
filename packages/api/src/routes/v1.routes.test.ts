@@ -70,4 +70,17 @@ describe('v1 REST API (API-key auth)', () => {
     expect(body.organization.id).toBe(orgId)
     expect(body.apiKey.name).toBe('test-key')
   })
+
+  it('403s a valid key that is not associated with an organization (fail closed)', async () => {
+    const userId = nanoid()
+    await h.db.insert(users).values({ id: userId, email: `${userId}@e.com`, passwordHash: 'x' })
+    // Key created WITHOUT an organizationId.
+    const { plainKey } = await new APIKeyService({ db: h.db }).generateKey({
+      userId,
+      name: 'no-org-key',
+      scopes: ['read:results'],
+    })
+    const res = await app().request('/v1/models', { headers: { 'X-API-Key': plainKey } })
+    expect(res.status).toBe(403)
+  })
 })

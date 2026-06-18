@@ -32,9 +32,16 @@ const parseTags = <T extends { tags: string | null }>(m: T) => ({
 v1Routes.get('/me', async (c) => {
   const key = c.get('apiKey')
   const org = await new OrganizationService({ db: c.get('db') }).getOrganization(c.get('activeOrgId')!)
+  if (!org) return c.json({ error: 'Organization not found' }, 404) // fail closed if the org was removed
+  let scopes: string[] = []
+  try {
+    scopes = JSON.parse(key.scopes)
+  } catch {
+    scopes = [] // tolerate malformed scope JSON rather than 500
+  }
   return c.json({
-    organization: org ? { id: org.id, name: org.name, slug: org.slug } : null,
-    apiKey: { name: key.name, prefix: key.keyPrefix, scopes: JSON.parse(key.scopes) },
+    organization: { id: org.id, name: org.name, slug: org.slug },
+    apiKey: { name: key.name, prefix: key.keyPrefix, scopes },
   })
 })
 
