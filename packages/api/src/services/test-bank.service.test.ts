@@ -40,6 +40,12 @@ describe('TestBankService', () => {
     await expect(svc.createTask({ ...validTask, testSuite: 'not json {' })).rejects.toThrow(/valid JSON/)
   })
 
+  it('requires testSuite (NOT NULL column guard)', async () => {
+    await expect(svc.createTask({ ...validTask, testSuite: undefined as never })).rejects.toThrow(
+      /testSuite is required/,
+    )
+  })
+
   it('lists with filters and pagination', async () => {
     await svc.createTask({ ...validTask, difficulty: 'easy' })
     await svc.createTask({ ...validTask, difficulty: 'hard' })

@@ -3,7 +3,7 @@
  * (the `test_bank` table). Platform content (not org-scoped); callers are gated to
  * super-admin at the route layer.
  */
-import { eq, and, desc } from 'drizzle-orm'
+import { eq, and, desc, count } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { testBank, type TestBankTask, type InsertTestBankTask } from '../db/schema'
 import { generateId } from '../utils/crypto'
@@ -55,6 +55,9 @@ function validateEnums(input: Partial<CreateTaskInput>): string[] {
 }
 
 function serializeTestSuite(ts: CreateTaskInput['testSuite']): string {
+  if (ts === undefined || ts === null) {
+    throw new Error('testSuite is required')
+  }
   if (typeof ts === 'string') {
     try {
       JSON.parse(ts)
@@ -119,14 +122,33 @@ export class TestBankService {
     if (filters.language) conditions.push(eq(testBank.language, filters.language))
     if (filters.scenario) conditions.push(eq(testBank.scenario, filters.scenario))
     if (filters.difficulty) conditions.push(eq(testBank.difficulty, filters.difficulty))
-
-    const rows = conditions.length
-      ? await this.db.select().from(testBank).where(and(...conditions)).orderBy(desc(testBank.createdAt))
-      : await this.db.select().from(testBank).orderBy(desc(testBank.createdAt))
+    const where = conditions.length ? and(...conditions) : undefined
 
     const limit = filters.limit ?? 50
     const offset = filters.offset ?? 0
-    return { tasks: rows.slice(offset, offset + limit), total: rows.length }
+
+    // Count without selecting every column; paginate at the DB (limit/offset).
+    const totalRows = where
+      ? await this.db.select({ value: count() }).from(testBank).where(where)
+      : await this.db.select({ value: count() }).from(testBank)
+    const total = totalRows[0]?.value ?? 0
+
+    const tasks = where
+      ? await this.db
+          .select()
+          .from(testBank)
+          .where(where)
+          .orderBy(desc(testBank.createdAt))
+          .limit(limit)
+          .offset(offset)
+      : await this.db
+          .select()
+          .from(testBank)
+          .orderBy(desc(testBank.createdAt))
+          .limit(limit)
+          .offset(offset)
+
+    return { tasks, total }
   }
 
   async updateTask(id: string, updates: Partial<CreateTaskInput>): Promise<TestBankTask> {
@@ -171,7 +193,13 @@ export class TestBankService {
     byScenario: Record<string, number>
     byDifficulty: Record<string, number>
   }> {
-    const all = await this.db.select().from(testBank)
+    const all = await this.db
+      .select({
+        language: testBank.language,
+        scenario: testBank.scenario,
+        difficulty: testBank.difficulty,
+      })
+      .from(testBank)
     const tally = (key: 'language' | 'scenario' | 'difficulty') =>
       all.reduce<Record<string, number>>((acc, t) => {
         acc[t[key]] = (acc[t[key]] ?? 0) + 1
