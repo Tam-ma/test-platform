@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for GITHUB_TOKEN (CodeQL: limit workflow permissions).
+permissions:
+  contents: read
+
 jobs:
   api-tests:
     name: API (vitest)
