@@ -3,6 +3,7 @@ import { createProvider, isSupportedProvider, SUPPORTED_PROVIDERS } from './regi
 import { MockProvider } from './mock'
 import { AnthropicProvider } from './anthropic'
 import { OpenAIProvider } from './openai'
+import { GoogleProvider } from './google'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -101,5 +102,28 @@ describe('OpenAIProvider.complete', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer sk-oa')
     expect(res.content).toBe('pong')
     expect(res.usage.totalTokens).toBe(4)
+  })
+})
+
+describe('GoogleProvider.complete', () => {
+  it('sends the key as a header, encodes the model, and parses the response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: 'salut' }] }, finishReason: 'STOP' }],
+        usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3, totalTokenCount: 5 },
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await new GoogleProvider({ apiKey: 'g-key' }).complete({ model: 'gemini/pro', prompt: 'bonjour' })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    // model segment is URL-encoded; key is NOT in the query string
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini%2Fpro:generateContent')
+    expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('g-key')
+    expect(res.content).toBe('salut')
+    expect(res.usage).toEqual({ promptTokens: 2, completionTokens: 3, totalTokens: 5 })
+    expect(res.finishReason).toBe('STOP')
   })
 })

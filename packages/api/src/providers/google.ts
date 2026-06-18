@@ -10,9 +10,11 @@ export class GoogleProvider implements LLMProvider {
 
   async complete(req: CompletionRequest): Promise<CompletionResult> {
     const base = this.opts.baseURL ?? 'https://generativelanguage.googleapis.com'
-    const res = await fetch(`${base}/v1beta/models/${req.model}:generateContent?key=${this.opts.apiKey}`, {
+    // Key goes in the x-goog-api-key header (current Gemini API auth; avoids
+    // leaking the key in URLs/logs). encodeURIComponent guards the model segment.
+    const res = await fetch(`${base}/v1beta/models/${encodeURIComponent(req.model)}:generateContent`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.opts.apiKey },
       body: JSON.stringify({
         contents: [
           { parts: [...(req.systemPrompt ? [{ text: req.systemPrompt }] : []), { text: req.prompt }] },
