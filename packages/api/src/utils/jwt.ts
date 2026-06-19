@@ -9,6 +9,7 @@ export interface TokenPayload {
   userId: string
   email: string
   type: 'access' | 'refresh'
+  activeOrgId?: string
   iat?: number
   exp?: number
 }
@@ -93,16 +94,17 @@ export function decodeToken(token: string): DecodedToken | null {
 export async function generateTokenPair(
   userId: string,
   email: string,
-  secret: string
+  secret: string,
+  activeOrgId?: string
 ): Promise<{ accessToken: string; refreshToken: string }> {
   const accessToken = await signToken(
-    { userId, email, type: 'access' },
+    { userId, email, type: 'access', activeOrgId },
     secret,
     '15m' // 15 minutes
   )
 
   const refreshToken = await signToken(
-    { userId, email, type: 'refresh' },
+    { userId, email, type: 'refresh', activeOrgId },
     secret,
     '7d' // 7 days
   )

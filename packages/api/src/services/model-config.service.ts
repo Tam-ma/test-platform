@@ -30,17 +30,14 @@ export class ModelConfigService {
     supportsVision?: boolean
     supportsFunctions?: boolean
   }): Promise<SelectLLMModel[]> {
-    let query = this.db.select().from(llmModels)
+    // Drizzle's .where() overwrites rather than ANDs — combine conditions once.
+    const conditions = []
+    if (filters?.provider) conditions.push(eq(llmModels.provider, filters.provider))
+    if (filters?.status) conditions.push(eq(llmModels.status, filters.status))
 
-    // Apply filters if provided
-    if (filters?.provider) {
-      query = query.where(eq(llmModels.provider, filters.provider)) as any
-    }
-    if (filters?.status) {
-      query = query.where(eq(llmModels.status, filters.status)) as any
-    }
-
-    const models = await query
+    const models = conditions.length
+      ? await this.db.select().from(llmModels).where(and(...conditions))
+      : await this.db.select().from(llmModels)
 
     // Apply boolean filters manually (SQLite limitation)
     let filtered = models
@@ -65,7 +62,7 @@ export class ModelConfigService {
   /**
    * Get models configured for a specific user
    */
-  async getUserModelConfigs(userId: string): Promise<
+  async getUserModelConfigs(organizationId: string): Promise<
     Array<{
       config: SelectUserModelConfig
       model: SelectLLMModel
@@ -78,7 +75,7 @@ export class ModelConfigService {
       })
       .from(userModelConfigs)
       .innerJoin(llmModels, eq(userModelConfigs.modelId, llmModels.id))
-      .where(eq(userModelConfigs.userId, userId))
+      .where(eq(userModelConfigs.organizationId, organizationId))
 
     return configs
   }
@@ -87,13 +84,13 @@ export class ModelConfigService {
    * Get a specific user model configuration
    */
   async getUserModelConfig(
-    userId: string,
+    organizationId: string,
     configId: string
   ): Promise<SelectUserModelConfig | undefined> {
     const [config] = await this.db
       .select()
       .from(userModelConfigs)
-      .where(and(eq(userModelConfigs.userId, userId), eq(userModelConfigs.id, configId)))
+      .where(and(eq(userModelConfigs.organizationId, organizationId), eq(userModelConfigs.id, configId)))
       .limit(1)
 
     return config
@@ -104,6 +101,7 @@ export class ModelConfigService {
    */
   async createUserModelConfig(
     userId: string,
+    organizationId: string,
     data: {
       modelId: string
       apiKey: string
@@ -128,6 +126,7 @@ export class ModelConfigService {
     await this.db.insert(userModelConfigs).values({
       id,
       userId,
+      organizationId,
       modelId: data.modelId,
       apiKey: data.apiKey, // TODO: encrypt
       apiKeyLastFour,
@@ -148,7 +147,7 @@ export class ModelConfigService {
    * Update a user model configuration
    */
   async updateUserModelConfig(
-    userId: string,
+    organizationId: string,
     configId: string,
     updates: {
       nickname?: string
@@ -160,8 +159,8 @@ export class ModelConfigService {
       enabled?: boolean
     }
   ): Promise<SelectUserModelConfig | undefined> {
-    // Verify ownership
-    const existing = await this.getUserModelConfig(userId, configId)
+    // Verify ownership (scoped to the active organization)
+    const existing = await this.getUserModelConfig(organizationId, configId)
     if (!existing) {
       throw new Error('Configuration not found or access denied')
     }
@@ -181,9 +180,9 @@ export class ModelConfigService {
   /**
    * Delete a user model configuration
    */
-  async deleteUserModelConfig(userId: string, configId: string): Promise<boolean> {
-    // Verify ownership
-    const existing = await this.getUserModelConfig(userId, configId)
+  async deleteUserModelConfig(organizationId: string, configId: string): Promise<boolean> {
+    // Verify ownership (scoped to the active organization)
+    const existing = await this.getUserModelConfig(organizationId, configId)
     if (!existing) {
       throw new Error('Configuration not found or access denied')
     }
@@ -197,6 +196,7 @@ export class ModelConfigService {
    */
   async recordModelUsage(data: {
     userId: string
+    organizationId?: string
     userModelConfigId?: string
     modelId: string
     requestType: 'benchmark' | 'chat' | 'completion'
@@ -221,6 +221,7 @@ export class ModelConfigService {
     const usageRecord: InsertModelUsage = {
       id: nanoid(),
       userId: data.userId,
+      organizationId: data.organizationId,
       userModelConfigId: data.userModelConfigId,
       modelId: data.modelId,
       requestType: data.requestType,
@@ -244,7 +245,7 @@ export class ModelConfigService {
    * Get usage statistics for a user
    */
   async getUserUsageStats(
-    userId: string,
+    organizationId: string,
     options?: {
       modelId?: string
       startDate?: Date
@@ -265,20 +266,14 @@ export class ModelConfigService {
       costUsd: number
     }>
   }> {
-    let query = this.db.select().from(modelUsage).where(eq(modelUsage.userId, userId))
+    // Combine in a single .where(): Drizzle's .where() OVERWRITES, so chaining a
+    // filter after the org scope would silently drop tenant isolation (leak).
+    const conditions = [eq(modelUsage.organizationId, organizationId)]
+    if (options?.modelId) conditions.push(eq(modelUsage.modelId, options.modelId))
+    if (options?.startDate) conditions.push(sql`${modelUsage.timestamp} >= ${options.startDate}`)
+    if (options?.endDate) conditions.push(sql`${modelUsage.timestamp} <= ${options.endDate}`)
 
-    if (options?.modelId) {
-      query = query.where(eq(modelUsage.modelId, options.modelId)) as any
-    }
-
-    if (options?.startDate) {
-      query = query.where(sql`${modelUsage.timestamp} >= ${options.startDate}`) as any
-    }
-
-    if (options?.endDate) {
-      query = query.where(sql`${modelUsage.timestamp} <= ${options.endDate}`) as any
-    }
-
+    let query = this.db.select().from(modelUsage).where(and(...conditions)) as any
     if (options?.limit) {
       query = query.limit(options.limit) as any
     }
@@ -361,7 +356,7 @@ export class ModelConfigService {
   /**
    * Check if user has exceeded budget limits
    */
-  async checkUserBudgetLimits(userId: string, configId: string): Promise<{
+  async checkUserBudgetLimits(organizationId: string, configId: string): Promise<{
     withinBudget: boolean
     withinDailyLimit: boolean
     currentMonthCostUsd: number
@@ -369,7 +364,7 @@ export class ModelConfigService {
     monthlyBudgetUsd?: number
     dailyRequestLimit?: number
   }> {
-    const config = await this.getUserModelConfig(userId, configId)
+    const config = await this.getUserModelConfig(organizationId, configId)
     if (!config) {
       throw new Error('Configuration not found')
     }

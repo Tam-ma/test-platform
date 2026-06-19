@@ -23,18 +23,21 @@ import {
 import { generateTokenPair } from '../utils/jwt'
 import { validateEmail, validatePassword } from '../utils/validation'
 import { EmailService } from './email.service'
+import { OrganizationService } from './organization.service'
 
 export interface AuthServiceContext {
   db: DrizzleD1Database<typeof import('../db/schema')>
   jwtSecret: string
   kv?: KVNamespace
   emailService?: EmailService
+  resendApiKey?: string
 }
 
 export interface LoginResponse {
   user: Omit<User, 'passwordHash'>
   accessToken: string
   refreshToken: string
+  activeOrgId?: string
 }
 
 export class AuthService {
@@ -43,11 +46,11 @@ export class AuthService {
   private kv?: KVNamespace
   private emailService?: EmailService
 
-  constructor({ db, jwtSecret, kv, emailService }: AuthServiceContext) {
+  constructor({ db, jwtSecret, kv, emailService, resendApiKey }: AuthServiceContext) {
     this.db = db
     this.jwtSecret = jwtSecret
     this.kv = kv
-    this.emailService = emailService || new EmailService()
+    this.emailService = emailService || new EmailService(resendApiKey)
   }
 
   /**
@@ -97,6 +100,18 @@ export class AuthService {
     }
 
     await this.db.insert(users).values(newUser)
+
+    // Create the user's personal organization (tenant) with them as owner, so
+    // every account always has an active org to scope requests to. D1 has no
+    // multi-statement transaction here, so compensate by removing the user if the
+    // org/membership creation fails — never leave an account with no org.
+    const orgService = new OrganizationService({ db: this.db })
+    try {
+      await orgService.createPersonalOrganization(userId, fullName || email.split('@')[0])
+    } catch (err) {
+      await this.db.delete(users).where(eq(users.id, userId))
+      throw err
+    }
 
     // Create verification token
     const verificationToken = generateToken(32)
@@ -209,11 +224,16 @@ export class AuthService {
     // Note: We allow login even if email is not verified
     // The frontend will handle redirecting to verification page if needed
 
-    // Generate JWT tokens
+    // Resolve the user's active organization (their personal org by default)
+    const orgService = new OrganizationService({ db: this.db })
+    const activeOrgId = (await orgService.getDefaultOrganizationId(user.id)) ?? undefined
+
+    // Generate JWT tokens, carrying the active org so requests are tenant-scoped
     const { accessToken, refreshToken } = await generateTokenPair(
       user.id,
       user.email,
-      this.jwtSecret
+      this.jwtSecret,
+      activeOrgId
     )
 
     // Store refresh token in KV if available
@@ -234,6 +254,7 @@ export class AuthService {
       user: userWithoutPassword,
       accessToken,
       refreshToken,
+      activeOrgId,
     }
   }
 
@@ -264,6 +285,7 @@ export class AuthService {
         userId: decoded.userId,
         email: decoded.email,
         type: 'access',
+        activeOrgId: decoded.activeOrgId,
       },
       this.jwtSecret,
       '15m'

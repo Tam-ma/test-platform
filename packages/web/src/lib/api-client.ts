@@ -5,7 +5,7 @@ export class APIClient {
 
   constructor(baseURL?: string) {
     this.client = axios.create({
-      baseURL: baseURL || process.env.API_BASE_URL || '/api',
+      baseURL: baseURL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3187',
       headers: {
         'Content-Type': 'application/json',
       },

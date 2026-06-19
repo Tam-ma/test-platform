@@ -1,0 +1,43 @@
+# Dependabot configuration for the test-platform monorepo.
+# Each package has its own manifest/lockfile, so each is registered separately.
+# Minor + patch bumps are grouped per package to cut PR noise; majors stay individual.
+version: 2
+updates:
+  # Active backend — Hono / Cloudflare Workers / Drizzle / D1
+  - package-ecosystem: "npm"
+    directory: "/packages/api"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      api-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Active frontend — Next.js 15 / React 19
+  - package-ecosystem: "npm"
+    directory: "/packages/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      web-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Root manifest (legacy backend tooling + shared dev deps)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      root-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions used by create-story.yml and e2e-tests.yml
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]

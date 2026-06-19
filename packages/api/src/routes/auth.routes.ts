@@ -138,6 +138,7 @@ authRoutes.post(
       const authService = new AuthService({
         db: c.get('db'),
         jwtSecret: c.env.JWT_SECRET,
+        resendApiKey: c.env.RESEND_API_KEY,
       })
 
       await authService.resendVerificationEmail(email)
@@ -169,7 +170,7 @@ authRoutes.post(
         kv: c.env.KV,
       })
 
-      const { user, accessToken, refreshToken } = await authService.login(
+      const { user, accessToken, refreshToken, activeOrgId } = await authService.login(
         email,
         password
       )
@@ -186,6 +187,7 @@ authRoutes.post(
         accessToken,
         // Also return refreshToken in body for non-cookie clients
         refreshToken,
+        activeOrgId,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Login failed'
